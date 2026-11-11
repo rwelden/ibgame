@@ -82,9 +82,9 @@ const P = new URLSearchParams(location.search);
 function num(v, d, lo, hi) { const n = parseFloat(v); return isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d; }
 const SRC     = (P.get('src') || 'device').toLowerCase() === 'game' ? 'game' : 'device';
 const DISRUPT = P.get('disrupt') !== '0';
-const DUR     = num(P.get('dur'), 120, 20, 600);
+const DUR     = num(P.get('dur'), 80, 20, 600);
 const DT      = num(P.get('t'), 60, 3, DUR - 3);
-const DLEN    = num(P.get('dlen'), 4, 1, 15);
+const DLEN    = num(P.get('dlen'), 8, 1, 15);
 const SEED    = Math.floor(num(P.get('seed'), 20261111, 0, 4294967295));
 const PID     = (P.get('pid') || '').slice(0, 64);
 
