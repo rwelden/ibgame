@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Game</title>
+<style>
+  html, body { margin:0; padding:0; background:#ffffff; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  body { padding:6px; box-sizing:border-box; }
+  /* ---------- Device frame (identical across conditions) ---------- */
+  #device { max-width:760px; margin:0 auto; background:#1b1d22; border-radius:24px; padding:8px 12px 12px; box-sizing:border-box; box-shadow:0 6px 24px rgba(0,0,0,.25); }
+  #statusbar { display:flex; justify-content:space-between; align-items:center; color:#e8e8ea; font-size:13px; font-weight:600; padding:2px 10px 7px; user-select:none; }
+  #statusbar .right { display:flex; align-items:center; gap:8px; }
+  #screen { position:relative; width:100%; aspect-ratio:720/440; background:#000; border-radius:10px; overflow:hidden; outline:none; }
+  canvas { display:block; width:100%; height:100%; }
+  #homebar { width:120px; height:5px; border-radius:3px; background:#55585f; margin:9px auto 0; }
+  /* ---------- Disruption banner (identical styling for both sources) ---------- */
+  #banner { position:absolute; top:12px; left:50%; transform:translateX(-50%); max-width:50%; display:flex; align-items:center; gap:10px;
+            background:rgba(18,20,26,.94); color:#fff; border-radius:10px; padding:9px 14px; font-size:14px; line-height:1.3;
+            box-shadow:0 4px 14px rgba(0,0,0,.35); opacity:0; transition:opacity .25s; pointer-events:none; z-index:5; }
+  #banner.show { opacity:1; }
+  #banner .tag { background:#ffffff; color:#111; font-weight:800; font-size:11px; letter-spacing:.08em; padding:3px 7px; border-radius:4px; flex:none; }
+  #banner .spin { width:14px; height:14px; border:2px solid rgba(255,255,255,.3); border-top-color:#fff; border-radius:50%; animation:sp .8s linear infinite; flex:none; }
+  @keyframes sp { to { transform:rotate(360deg); } }
+  /* ---------- Overlays ---------- */
+  #overlay { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; z-index:4; }
+  #overlay .card { max-width:78%; text-align:center; }
+  #focushint { position:absolute; bottom:8px; left:50%; transform:translateX(-50%); font-size:12px; color:#fff; background:rgba(0,0,0,.55);
+               padding:4px 10px; border-radius:6px; display:none; z-index:6; pointer-events:none; }
+  /* vivid overlay */
+  .skin-vivid #overlay { background:radial-gradient(ellipse at center, rgba(6,40,70,.55), rgba(2,14,30,.85)); color:#eaf6ff; }
+  .skin-vivid h1 { font-size:34px; margin:0 0 8px; letter-spacing:.04em; color:#ffe9a8; text-shadow:0 2px 12px rgba(255,210,120,.5); }
+  .skin-vivid p { font-size:15px; line-height:1.5; margin:8px 0; }
+  .skin-vivid button { margin-top:14px; font-size:17px; font-weight:700; padding:11px 30px; border:none; border-radius:30px; cursor:pointer;
+                       background:linear-gradient(#ffd66b,#f2a93b); color:#3b2300; box-shadow:0 4px 16px rgba(255,190,80,.45); }
+  /* minimal overlay */
+  .skin-minimal #overlay { background:#e9e9e9; color:#333; }
+  .skin-minimal h1 { font-size:20px; font-weight:600; margin:0 0 8px; }
+  .skin-minimal p { font-size:14px; line-height:1.5; margin:6px 0; }
+  .skin-minimal button { margin-top:12px; font-size:15px; padding:8px 24px; border:1px solid #888; border-radius:4px; background:#f7f7f7; color:#333; cursor:pointer; }
+  kbd { border:1px solid currentColor; border-radius:4px; padding:0 5px; font-family:inherit; font-size:.9em; opacity:.9; }
+</style>
+</head>
+<body>
+<div id="device">
+  <div id="statusbar">
+    <span id="clock">9:41</span>
+    <span class="right">
+      <svg width="18" height="13" viewBox="0 0 18 13" aria-hidden="true"><path d="M9 12.5l2.4-2.9a3.6 3.6 0 0 0-4.8 0z" fill="#e8e8ea"/><path d="M4.4 7.2a6.9 6.9 0 0 1 9.2 0l1.5-1.8a9.3 9.3 0 0 0-12.2 0z" fill="#e8e8ea"/><path d="M1.5 3.7a11.4 11.4 0 0 1 15 0L18 1.9a13.8 13.8 0 0 0-18 0z" fill="#e8e8ea"/></svg>
+      <svg width="27" height="13" viewBox="0 0 27 13" aria-hidden="true"><rect x=".5" y=".5" width="23" height="12" rx="3" fill="none" stroke="#e8e8ea"/><rect x="2" y="2" width="16" height="9" rx="1.5" fill="#e8e8ea"/><rect x="24.5" y="4" width="2" height="5" rx="1" fill="#e8e8ea"/></svg>
+      <span>78%</span>
+    </span>
+  </div>
+  <div id="screen" tabindex="0">
+    <canvas id="c"></canvas>
+    <div id="banner"><span class="spin"></span><span class="tag" id="btag"></span><span id="btext"></span></div>
+    <div id="overlay"><div class="card" id="card"></div></div>
+    <div id="focushint">Click on the game to keep controlling it</div>
+  </div>
+  <div id="homebar"></div>
+</div>
+
+<script>
+(function () {
+'use strict';
+
+/* =====================================================================
+   CONDITION — this is the ONLY line that differs between the two files
+   ===================================================================== */
+const SKIN = 'minimal';
+
+/* ---------------- URL parameters ----------------
+   src     = device | game     (disruption source label; default device)
+   disrupt = 1 | 0             (0 = no disruption, e.g. for a bonus round)
+   dur     = round length in game seconds (default 120)
+   t       = game second at which disruption begins (default 60)
+   dlen    = disruption length in seconds (default 4)
+   seed    = spawn-sequence seed (default 20261111; same seed = same sequence)
+   pid     = participant/response ID passed through to the data
+--------------------------------------------------- */
+const P = new URLSearchParams(location.search);
+function num(v, d, lo, hi) { const n = parseFloat(v); return isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d; }
+const SRC     = (P.get('src') || 'device').toLowerCase() === 'game' ? 'game' : 'device';
+const DISRUPT = P.get('disrupt') !== '0';
+const DUR     = num(P.get('dur'), 120, 20, 600);
+const DT      = num(P.get('t'), 60, 3, DUR - 3);
+const DLEN    = num(P.get('dlen'), 4, 1, 15);
+const SEED    = Math.floor(num(P.get('seed'), 20261111, 0, 4294967295));
+const PID     = (P.get('pid') || '').slice(0, 64);
+
+const BANNER = {
+  device: { tag: 'DEVICE', text: 'Device is low on available memory. Performance reduced.' },
+  game:   { tag: 'GAME',   text: 'Game is loading new level assets. Performance reduced.' }
+};
+
+document.body.className = 'skin-' + SKIN;
+
+/* ---------------- Canvas ---------------- */
+const W = 720, H = 440;
+const cvs = document.getElementById('c');
+const ctx = cvs.getContext('2d');
+const DPR = Math.min(2, window.devicePixelRatio || 1);
+cvs.width = W * DPR; cvs.height = H * DPR;
+ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+/* ---------------- Deterministic spawn schedule (identical across skins) ---------------- */
+function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const rng = mulberry32(SEED);
+const schedule = [];
+(function () {
+  let t = 1.2;
+  while (t < DUR - 1.5) {
+    const prog = t / DUR;
+    schedule.push({ t: t, x: 40 + rng() * (W - 80), good: rng() < 0.68, vy: 150 + 110 * prog + rng() * 30 });
+    t += 0.62 - 0.18 * prog + rng() * 0.12;
+  }
+})();
+const TOTAL_GOOD = schedule.filter(s => s.good).length;
+
+/* ---------------- Game state ---------------- */
+const R = 16;                                            // item hit radius (both skins)
+const PL = { x: W / 2, y: H - 46, w: 76, h: 22, speed: 430, face: 1 };
+let items = [], nextIdx = 0, gt = 0, score = 0;
+let nGood = 0, nBad = 0, nMissed = 0, nDodged = 0;
+let state = 'intro';                                     // intro | play | end
+let disrupted = false, dState = null, dStartPerf = 0, lastStutter = 0, stutterI = 0;
+const STUTTER_MS = [240, 360, 200, 420, 280, 330, 220, 390];
+const keys = { left: false, right: false };
+const fx = [];                                           // cosmetic effects (vivid only)
+let shake = 0, flash = 0;
+
+const L = {                                              // logged process data
+  keypresses: 0, keysDuringDisr: 0, blurCount: 0, blurMs: 0, hiddenMs: 0,
+  scoreAtDisr: null, goodAtDisr: null, badAtDisr: null, startedAt: null, wallStart: 0
+};
+let blurAt = null, hiddenAt = null;
+
+/* ---------------- Audio (vivid only) ---------------- */
+let AC = null, master = null;
+function initAudio() {
+  if (SKIN !== 'vivid') return;
+  try {
+    AC = new (window.AudioContext || window.webkitAudioContext)();
+    master = AC.createGain(); master.gain.value = 0.55; master.connect(AC.destination);
+    const lp = AC.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 520;
+    const ag = AC.createGain(); ag.gain.value = 0.07; lp.connect(ag); ag.connect(master);
+    [110, 164.8, 220.4, 329.6].forEach((f, i) => { const o = AC.createOscillator(); o.type = i === 3 ? 'triangle' : 'sine'; o.frequency.value = f; o.detune.value = (i - 1.5) * 5; o.connect(lp); o.start(); });
+    const lfo = AC.createOscillator(); lfo.frequency.value = 0.11; const lg = AC.createGain(); lg.gain.value = 0.035; lfo.connect(lg); lg.connect(ag.gain); lfo.start();
+  } catch (e) { AC = null; }
+}
+const NOTES = [523.25, 587.33, 659.25, 783.99, 880.0, 1046.5];
+function chime() {
+  if (!AC) return; const n = AC.currentTime;
+  const o = AC.createOscillator(), g = AC.createGain(); o.type = 'sine'; o.frequency.value = NOTES[nGood % NOTES.length];
+  g.gain.setValueAtTime(0.0001, n); g.gain.exponentialRampToValueAtTime(0.22, n + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, n + 0.6);
+  o.connect(g); g.connect(master); o.start(n); o.stop(n + 0.65);
+}
+function thud() {
+  if (!AC) return; const n = AC.currentTime;
+  const o = AC.createOscillator(), g = AC.createGain(); o.type = 'triangle';
+  o.frequency.setValueAtTime(160, n); o.frequency.exponentialRampToValueAtTime(55, n + 0.3);
+  g.gain.setValueAtTime(0.0001, n); g.gain.exponentialRampToValueAtTime(0.35, n + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, n + 0.35);
+  o.connect(g); g.connect(master); o.start(n); o.stop(n + 0.4);
+}
+
+/* ---------------- Simulation (fixed step, identical across skins) ---------------- */
+const STEP = 1 / 60;
+function simulate(dt) {
+  gt += dt;
+  while (nextIdx < schedule.length && schedule[nextIdx].t <= gt) {
+    const s = schedule[nextIdx++]; items.push({ x: s.x, y: -R, vy: s.vy, good: s.good, ph: s.x });
+  }
+  let dir = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
+  if (dir) PL.face = dir;
+  PL.x = Math.max(PL.w / 2 + 4, Math.min(W - PL.w / 2 - 4, PL.x + dir * PL.speed * dt));
+
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i]; it.y += it.vy * dt;
+    const cx = Math.max(PL.x - PL.w / 2, Math.min(it.x, PL.x + PL.w / 2));
+    const cy = Math.max(PL.y - PL.h / 2, Math.min(it.y, PL.y + PL.h / 2));
+    if ((it.x - cx) * (it.x - cx) + (it.y - cy) * (it.y - cy) <= R * R) {
+      if (it.good) { score += 10; nGood++; onCollect(it); } else { score -= 15; nBad++; onHit(it); }
+      items.splice(i, 1); continue;
+    }
+    if (it.y > H + R) { if (it.good) nMissed++; else nDodged++; items.splice(i, 1); }
+  }
+  if (SKIN === 'vivid') updateFx(dt);
+  if (DISRUPT && !disrupted && gt >= DT) startDisruption();
+  if (gt >= DUR) endGame();
+}
+
+/* ---------------- Disruption ---------------- */
+const bannerEl = document.getElementById('banner');
+function startDisruption() {
+  disrupted = true; dState = 'freeze'; dStartPerf = performance.now();
+  L.scoreAtDisr = score; L.goodAtDisr = nGood; L.badAtDisr = nBad;
+  document.getElementById('btag').textContent = BANNER[SRC].tag;
+  document.getElementById('btext').textContent = BANNER[SRC].text;
+  bannerEl.classList.add('show');
+  if (AC) AC.suspend();
+}
+function endDisruption() {
+  dState = null; bannerEl.classList.remove('show');
+  if (AC) AC.resume();
+  lastPerf = performance.now(); acc = 0;
+}
+
+/* ---------------- Main loop ---------------- */
+let lastPerf = performance.now(), acc = 0, introT = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.1, (now - lastPerf) / 1000); lastPerf = now;
+  if (state === 'intro') { introT += dt; render(introT); return; }
+  if (state !== 'play') return;
+
+  if (dState) {
+    const el = (now - dStartPerf) / 1000;
+    if (el >= DLEN) { endDisruption(); return; }
+    if (el < DLEN * 0.4) return;                       // phase 1: hard freeze (no update, no redraw)
+    if (dState === 'freeze') { dState = 'stutter'; if (AC) AC.resume(); lastStutter = now; return; }
+    const wait = STUTTER_MS[stutterI % STUTTER_MS.length];
+    if (now - lastStutter < wait) return;              // phase 2: stutter (sim runs at ~half speed, ~3-4 fps)
+    let jump = (now - lastStutter) / 1000 * 0.5; lastStutter = now; stutterI++;
+    while (jump > 0 && state === 'play') { const s = Math.min(STEP, jump); simulate(s); jump -= s; }
+    render(gt); return;
+  }
+
+  acc += dt;
+  while (acc >= STEP && state === 'play' && !dState) { simulate(STEP); acc -= STEP; }
+  render(gt);
+}
+
+/* =====================================================================
+   RENDERING
+   ===================================================================== */
+function render(t) { if (SKIN === 'vivid') renderVivid(t); else renderMinimal(t); }
+
+/* ---------- Minimal ---------- */
+function renderMinimal() {
+  ctx.fillStyle = '#e9e9e9'; ctx.fillRect(0, 0, W, H);
+  for (const it of items) {
+    if (it.good) { ctx.beginPath(); ctx.arc(it.x, it.y, R, 0, Math.PI * 2); ctx.fillStyle = '#ffffff'; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = '#9a9a9a'; ctx.stroke(); }
+    else { ctx.fillStyle = '#4a4a4a'; ctx.fillRect(it.x - R, it.y - R, R * 2, R * 2); }
+  }
+  ctx.fillStyle = '#8a8a8a'; ctx.fillRect(PL.x - PL.w / 2, PL.y - PL.h / 2, PL.w, PL.h);
+  if (state !== 'intro') {
+    ctx.fillStyle = '#555'; ctx.font = '16px Helvetica, Arial, sans-serif'; ctx.textBaseline = 'top';
+    ctx.textAlign = 'left'; ctx.fillText('Score: ' + score, 14, 12);
+    ctx.textAlign = 'right'; ctx.fillText('Time: ' + fmtTime(Math.max(0, DUR - gt)), W - 14, 12);
+  }
+}
+function fmtTime(s) { s = Math.ceil(s); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+
+/* ---------- Vivid ---------- */
+const bgGrad = ctx.createLinearGradient(0, 0, 0, H);
+bgGrad.addColorStop(0, '#0f6a96'); bgGrad.addColorStop(0.45, '#0a426b'); bgGrad.addColorStop(1, '#041a33');
+const bubbles = Array.from({ length: 34 }, () => ({ x: Math.random() * W, y: Math.random() * H, r: 1 + Math.random() * 3.2, s: 14 + Math.random() * 30, w: Math.random() * 6 }));
+const corals = [
+  { x: 40, h: 46, c: [255, 110, 120] }, { x: 120, h: 34, c: [255, 170, 70] }, { x: 205, h: 52, c: [190, 110, 255] },
+  { x: 300, h: 30, c: [80, 220, 200] }, { x: 395, h: 48, c: [255, 120, 180] }, { x: 480, h: 36, c: [255, 200, 80] },
+  { x: 565, h: 54, c: [120, 170, 255] }, { x: 650, h: 40, c: [255, 130, 100] }, { x: 705, h: 30, c: [140, 240, 160] }
+];
+const weeds = [{ x: 78, h: 70 }, { x: 160, h: 90 }, { x: 255, h: 64 }, { x: 345, h: 84 }, { x: 440, h: 72 }, { x: 525, h: 94 }, { x: 610, h: 66 }, { x: 680, h: 80 }];
+const fish = Array.from({ length: 5 }, (_, i) => ({ x: Math.random() * W, y: 60 + i * 45 + Math.random() * 20, s: 12 + Math.random() * 14, d: Math.random() < .5 ? 1 : -1, sz: 5 + Math.random() * 4 }));
+let vLast = 0;
+
+function reefPct() { return Math.min(1, nGood / Math.max(1, TOTAL_GOOD * 0.75)); }
+function mix(a, b, k) { return 'rgb(' + a.map((v, i) => Math.round(v + (b[i] - v) * k)).join(',') + ')'; }
+
+function updateFx(dt) {
+  for (let i = fx.length - 1; i >= 0; i--) { const p = fx[i]; p.life -= dt; p.x += p.vx * dt; p.y += p.vy * dt; if (p.life <= 0) fx.splice(i, 1); }
+  shake = Math.max(0, shake - dt * 30); flash = Math.max(0, flash - dt * 2.6);
+}
+function onCollect(it) {
+  if (SKIN !== 'vivid') return; chime();
+  for (let k = 0; k < 12; k++) { const a = Math.random() * Math.PI * 2, sp = 40 + Math.random() * 120; fx.push({ k: 'sp', x: it.x, y: it.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: .55, max: .55 }); }
+  fx.push({ k: 'txt', s: '+10', col: '#ffe9a8', x: it.x, y: it.y - 10, vx: 0, vy: -50, life: .8, max: .8 });
+}
+function onHit(it) {
+  if (SKIN !== 'vivid') return; thud(); shake = 7; flash = 1;
+  fx.push({ k: 'txt', s: '-15', col: '#ff8a9a', x: it.x, y: it.y - 10, vx: 0, vy: -50, life: .8, max: .8 });
+}
+
+function renderVivid(t) {
+  const dtv = Math.max(0, Math.min(0.1, t - vLast)); vLast = t;
+  ctx.save();
+  if (shake > 0) ctx.translate((Math.random() - .5) * shake, (Math.random() - .5) * shake);
+  ctx.fillStyle = bgGrad; ctx.fillRect(-10, -10, W + 20, H + 20);
+
+  // light rays
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 5; i++) {
+    const x0 = 80 + i * 150 + Math.sin(t * 0.25 + i) * 30;
+    ctx.beginPath(); ctx.moveTo(x0 - 20, 0); ctx.lineTo(x0 + 30, 0); ctx.lineTo(x0 + 120 + Math.sin(t * .2 + i) * 40, H); ctx.lineTo(x0 + 20, H); ctx.closePath();
+    ctx.fillStyle = 'rgba(160,220,255,0.045)'; ctx.fill();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+
+  // distant fish
+  for (const f of fish) {
+    f.x += f.d * f.s * dtv; if (f.x > W + 20) f.x = -20; if (f.x < -20) f.x = W + 20;
+    const y = f.y + Math.sin(t * .8 + f.x * .01) * 4;
+    ctx.fillStyle = 'rgba(10,40,70,0.55)'; ctx.beginPath(); ctx.ellipse(f.x, y, f.sz * 1.6, f.sz * .7, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(f.x - f.d * f.sz * 1.4, y); ctx.lineTo(f.x - f.d * f.sz * 2.4, y - f.sz * .7); ctx.lineTo(f.x - f.d * f.sz * 2.4, y + f.sz * .7); ctx.closePath(); ctx.fill();
+  }
+
+  // sand
+  ctx.fillStyle = '#c9b48a'; ctx.beginPath(); ctx.moveTo(0, H);
+  for (let x = 0; x <= W; x += 20) ctx.lineTo(x, H - 16 - Math.sin(x * 0.02) * 5);
+  ctx.lineTo(W, H); ctx.closePath(); ctx.fill();
+
+  // seaweed
+  ctx.lineCap = 'round';
+  for (const w of weeds) {
+    ctx.strokeStyle = '#2f8f5b'; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(w.x, H - 12);
+    const sw = Math.sin(t * 1.1 + w.x) * 14;
+    ctx.quadraticCurveTo(w.x + sw, H - 12 - w.h * .55, w.x + sw * 1.4, H - 12 - w.h); ctx.stroke();
+  }
+  // coral (comes alive as the reef is restored)
+  const k = reefPct();
+  for (const c of corals) {
+    const col = mix([96, 104, 116], c.c, k);
+    ctx.strokeStyle = col; ctx.lineWidth = 9;
+    const base = H - 14;
+    for (let j = -1; j <= 1; j++) {
+      ctx.beginPath(); ctx.moveTo(c.x, base); ctx.lineTo(c.x + j * 12, base - c.h * (j === 0 ? 1 : .7)); ctx.stroke();
+      ctx.beginPath(); ctx.arc(c.x + j * 12, base - c.h * (j === 0 ? 1 : .7), 6, 0, Math.PI * 2); ctx.fillStyle = col; ctx.fill();
+    }
+  }
+
+  // bubbles
+  ctx.strokeStyle = 'rgba(220,245,255,0.55)'; ctx.lineWidth = 1;
+  for (const b of bubbles) {
+    b.y -= b.s * dtv; if (b.y < -5) { b.y = H + 5; b.x = Math.random() * W; }
+    ctx.beginPath(); ctx.arc(b.x + Math.sin(t * 2 + b.w) * 2, b.y, b.r, 0, Math.PI * 2); ctx.stroke();
+  }
+
+  // items
+  for (const it of items) {
+    if (it.good) drawPearl(it.x, it.y, t); else drawJelly(it.x, it.y, t + it.ph);
+  }
+  drawSub(PL.x, PL.y, t);
+
+  // effects
+  for (const p of fx) {
+    const a = Math.max(0, p.life / p.max);
+    if (p.k === 'sp') { ctx.fillStyle = 'rgba(255,240,190,' + a + ')'; ctx.beginPath(); ctx.arc(p.x, p.y, 2.2, 0, Math.PI * 2); ctx.fill(); }
+    else { ctx.globalAlpha = a; ctx.fillStyle = p.col; ctx.font = 'bold 18px Helvetica, Arial, sans-serif'; ctx.textAlign = 'center'; ctx.fillText(p.s, p.x, p.y); ctx.globalAlpha = 1; }
+  }
+  ctx.restore();
+
+  if (flash > 0) {
+    const g = ctx.createRadialGradient(W / 2, H / 2, H * .3, W / 2, H / 2, H * .9);
+    g.addColorStop(0, 'rgba(255,40,80,0)'); g.addColorStop(1, 'rgba(255,40,80,' + (0.45 * flash) + ')');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  }
+  if (state !== 'intro') drawVividHud();
+}
+
+function drawPearl(x, y, t) {
+  const g = ctx.createRadialGradient(x, y, 2, x, y, 28);
+  g.addColorStop(0, 'rgba(255,245,215,0.65)'); g.addColorStop(1, 'rgba(255,245,215,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, 28, 0, Math.PI * 2); ctx.fill();
+  const c = ctx.createRadialGradient(x - 4, y - 4, 1, x, y, 12);
+  c.addColorStop(0, '#ffffff'); c.addColorStop(.6, '#fbe6ef'); c.addColorStop(1, '#d9b9cf');
+  ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x, y, 11, 0, Math.PI * 2); ctx.fill();
+  const s = 3 + Math.sin(t * 6 + x) * 1.5;
+  ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(x + 7 - s, y - 9); ctx.lineTo(x + 7 + s, y - 9); ctx.moveTo(x + 7, y - 9 - s); ctx.lineTo(x + 7, y - 9 + s); ctx.stroke();
+}
+function drawJelly(x, y, t) {
+  const p = 1 + Math.sin(t * 5) * 0.08;
+  ctx.strokeStyle = 'rgba(255,150,220,0.75)'; ctx.lineWidth = 2;
+  for (let i = -1.5; i <= 1.5; i += 1) {
+    ctx.beginPath(); ctx.moveTo(x + i * 7, y + 2);
+    for (let s = 1; s <= 4; s++) ctx.lineTo(x + i * 7 + Math.sin(t * 6 + s + i) * 3, y + 2 + s * 5);
+    ctx.stroke();
+  }
+  const g = ctx.createRadialGradient(x, y - 6, 2, x, y - 2, 20);
+  g.addColorStop(0, 'rgba(255,200,240,0.95)'); g.addColorStop(1, 'rgba(190,70,200,0.85)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(x, y + 2, 18 * p, 17 / p, 0, Math.PI, 0); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,.5)'; ctx.beginPath(); ctx.ellipse(x - 6, y - 7, 4, 2.5, -.5, 0, Math.PI * 2); ctx.fill();
+}
+function drawSub(x, y, t) {
+  const f = PL.face;
+  // headlight
+  const lg = ctx.createLinearGradient(x, y, x, y - 170);
+  lg.addColorStop(0, 'rgba(255,240,180,0.22)'); lg.addColorStop(1, 'rgba(255,240,180,0)');
+  ctx.fillStyle = lg; ctx.beginPath(); ctx.moveTo(x - 10, y - 10); ctx.lineTo(x - 60, y - 170); ctx.lineTo(x + 60, y - 170); ctx.lineTo(x + 10, y - 10); ctx.closePath(); ctx.fill();
+  // body
+  ctx.fillStyle = '#f6c13b'; ctx.beginPath(); ctx.ellipse(x, y, 38, 14, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#e09d1f'; ctx.beginPath(); ctx.ellipse(x, y + 5, 34, 7, 0, 0, Math.PI); ctx.fill();
+  ctx.fillStyle = '#f6c13b'; ctx.fillRect(x - 8 - f * 4, y - 22, 18, 10);
+  ctx.fillStyle = '#e09d1f'; ctx.fillRect(x - 1 - f * 4, y - 28, 3, 7);
+  // porthole
+  ctx.fillStyle = '#7fd4ff'; ctx.beginPath(); ctx.arc(x + f * 16, y - 1, 7, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#a86f10'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.beginPath(); ctx.arc(x + f * 16 - 2, y - 3, 2, 0, Math.PI * 2); ctx.fill();
+  // propeller
+  const px = x - f * 40, sp = Math.sin(t * 30) * 9;
+  ctx.fillStyle = '#a86f10'; ctx.fillRect(px - 2, y - sp / 2 - 1, 4, Math.abs(sp) + 2);
+}
+function bar(x, y, w, h, v, col, label) {
+  ctx.fillStyle = 'rgba(0,20,40,0.45)'; roundRect(x, y, w, h, h / 2); ctx.fill();
+  ctx.fillStyle = col; roundRect(x, y, Math.max(h, w * v), h, h / 2); ctx.fill();
+  ctx.fillStyle = '#eaf6ff'; ctx.font = 'bold 11px Helvetica, Arial, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+  ctx.fillText(label, x, y - 3);
+}
+function roundRect(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+function drawVividHud() {
+  drawPearl(26, 26, 0);
+  ctx.fillStyle = '#fff6d8'; ctx.font = 'bold 20px Helvetica, Arial, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText(String(score), 46, 27);
+  bar(W - 170, 22, 150, 9, Math.max(0, 1 - gt / DUR), '#7fd4ff', 'OXYGEN');
+  bar(W - 170, 50, 150, 9, reefPct(), '#ff8fb1', 'REEF RESTORED');
+}
+
+/* =====================================================================
+   FLOW
+   ===================================================================== */
+const overlay = document.getElementById('overlay'), card = document.getElementById('card');
+const mins = DUR % 60 === 0 ? (DUR / 60) + (DUR === 60 ? ' minute' : ' minutes') : Math.round(DUR) + ' seconds';
+if (SKIN === 'vivid') {
+  card.innerHTML =
+    '<h1>PEARL DIVE</h1>' +
+    '<p>The coral reef is fading. Only the glowing pearls of the deep can bring it back to life.</p>' +
+    '<p>Pilot your submarine along the seafloor. Gather every pearl you can, and steer clear of the jellyfish before your oxygen runs out.</p>' +
+    '<p style="opacity:.85;font-size:14px">Move with <kbd>&larr;</kbd> <kbd>&rarr;</kbd> or <kbd>A</kbd> <kbd>D</kbd>. &nbsp;Pearl +10 &nbsp;&middot;&nbsp; Jellyfish &minus;15. &nbsp;Dive time: ' + mins + '.<br>Turn your sound on for the full experience.</p>' +
+    '<button id="go">Dive in</button>';
+} else {
+  card.innerHTML =
+    '<h1>Task</h1>' +
+    '<p>Move the gray bar with <kbd>&larr;</kbd> <kbd>&rarr;</kbd> or <kbd>A</kbd> <kbd>D</kbd>.</p>' +
+    '<p>Catch circles (+10). Avoid squares (&minus;15).</p>' +
+    '<p>The round lasts ' + mins + '.</p>' +
+    '<button id="go">Start</button>';
+}
+document.getElementById('go').addEventListener('click', startGame);
+
+function post(type, data) { try { window.parent.postMessage({ source: 'ib-game', type: type, data: data || {} }, '*'); } catch (e) {} }
+
+function startGame() {
+  if (state !== 'intro') return;
+  initAudio();
+  overlay.style.display = 'none';
+  state = 'play'; lastPerf = performance.now(); acc = 0;
+  L.startedAt = new Date().toISOString(); L.wallStart = performance.now();
+  document.getElementById('screen').focus(); window.focus();
+  post('start', { skin: SKIN, src: SRC, pid: PID });
+}
+
+function endGame() {
+  if (state === 'end') return;
+  state = 'end'; keys.left = keys.right = false;
+  if (blurAt !== null) { L.blurMs += performance.now() - blurAt; blurAt = null; }
+  if (AC) { try { AC.close(); } catch (e) {} AC = null; }
+  render(gt);
+  const data = {
+    skin: SKIN, src: SRC, disrupt: DISRUPT ? 1 : 0, pid: PID, seed: SEED, dur: DUR, dtime: DT, dlen: DLEN,
+    score: score, good: nGood, bad: nBad, missed: nMissed, dodged: nDodged, totalGood: TOTAL_GOOD,
+    scoreAtDisr: L.scoreAtDisr, scorePostDisr: L.scoreAtDisr === null ? null : score - L.scoreAtDisr,
+    goodPostDisr: L.goodAtDisr === null ? null : nGood - L.goodAtDisr, badPostDisr: L.badAtDisr === null ? null : nBad - L.badAtDisr,
+    keypresses: L.keypresses, keysDuringDisr: L.keysDuringDisr,
+    blurCount: L.blurCount, blurSec: +(L.blurMs / 1000).toFixed(1), hiddenSec: +(L.hiddenMs / 1000).toFixed(1),
+    wallSec: +((performance.now() - L.wallStart) / 1000).toFixed(1), startedAt: L.startedAt,
+    viewport: window.innerWidth + 'x' + window.innerHeight
+  };
+  window.__IB_RESULT = data;
+  post('complete', data);
+  overlay.style.display = 'flex';
+  card.innerHTML = SKIN === 'vivid'
+    ? '<h1>SURFACING</h1><p>You gathered <b>' + nGood + '</b> pearls. Final score: <b>' + score + '</b>.</p><p>Please click the <b>Next</b> button below to continue.</p>'
+    : '<h1>Round complete</h1><p>Score: ' + score + '</p><p>Please click the Next button below to continue.</p>';
+}
+
+/* ---------------- Input & attention logging ---------------- */
+const KEYMAP = { ArrowLeft: 'left', a: 'left', A: 'left', ArrowRight: 'right', d: 'right', D: 'right' };
+window.addEventListener('keydown', e => {
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === ' ') e.preventDefault();
+  if (state !== 'play') return;
+  const k = KEYMAP[e.key]; if (!k) return;
+  if (!e.repeat) { L.keypresses++; if (dState) L.keysDuringDisr++; }
+  keys[k] = true;
+});
+window.addEventListener('keyup', e => { const k = KEYMAP[e.key]; if (k) keys[k] = false; });
+const hint = document.getElementById('focushint');
+window.addEventListener('blur', () => {
+  keys.left = keys.right = false;
+  if (state === 'play') { L.blurCount++; blurAt = performance.now(); hint.style.display = 'block'; }
+});
+window.addEventListener('focus', () => {
+  if (blurAt !== null) { L.blurMs += performance.now() - blurAt; blurAt = null; }
+  hint.style.display = 'none';
+});
+document.getElementById('screen').addEventListener('mousedown', () => { document.getElementById('screen').focus(); window.focus(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { if (state === 'play') hiddenAt = performance.now(); }
+  else if (hiddenAt !== null) { L.hiddenMs += performance.now() - hiddenAt; hiddenAt = null; lastPerf = performance.now(); }
+});
+
+/* ---------------- Status bar clock ---------------- */
+function tick() { const d = new Date(); let h = d.getHours() % 12 || 12; document.getElementById('clock').textContent = h + ':' + String(d.getMinutes()).padStart(2, '0'); }
+tick(); setInterval(tick, 15000);
+
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
